@@ -17,8 +17,8 @@ formatter = logging.Formatter('\n[%(levelname)s] %(message)s')
 channel.setFormatter(formatter)
 _log.addHandler(channel)
 
-WORKSPACE = 0000000
-TOKEN = 'xxxxxxxxxxxxxxxxxxxxxxxxxxx'
+WORKSPACE = 00000
+TOKEN = 'xxxxxxxxxxxxxxxxxxxxxx'
 
 HEADERS = {
     'content-type': 'application/json',
@@ -57,32 +57,35 @@ def fetch_data(since, until):
     raise Exception(response.text)
 
 
-def parse_item_name(title):
+def parse_item_name(title, parse_task=False):
     entry_list = re.findall(r'\[(.*?)\]', title.get('time_entry', str()))
-    task_code = entry_list and entry_list[0] or str()
+    task_code = (entry_list and entry_list[0] or str()).upper()
+
+    if parse_task:
+        return task_code
+
     project_code = task_code.split('-')
     project_name = project_code and project_code[0] or str()
-    return project_name.upper()
+    return project_name
 
 
-def parse_item(item):
-    item_name = parse_item_name(item.get('title', dict()))
-    return item_name, item.get('time')
+def parse_item(item, parse_task=False):
+    item_name = parse_item_name(
+        item.get('title', dict()),
+        parse_task=parse_task,
+    )
+    return item_name, item.get('time', int())
 
 
-def analyze_data(data_list):
+def analyze_data(data_list, parse_task=False):
     data_dict = defaultdict(list)
-
-    if not data_list:
-        _log.info('Empty received data.')
-        return data_dict
 
     for data in data_list:
         total_time = data.get('time', int())
         data_dict['total_time'].append(total_time)
 
         for item in data.get('items', []):
-            item_key, item_value = parse_item(item)
+            item_key, item_value = parse_item(item, parse_task=parse_task)
             data_dict[item_key].append(item_value)
 
     return data_dict
@@ -114,8 +117,19 @@ if __name__ == '__main__':
         _log.info('There was a job free period.')
         _exit()
 
-    data_dict = analyze_data(response.get('data', []))
+    received_data = response.get('data', [])
+    if not received_data:
+        _log.info('Empty received data.')
+        _exit()
+
+    data_dict_by_project = analyze_data(received_data)
+    data_dict_by_task = analyze_data(received_data, parse_task=True)
+    data_dict_by_task.pop('total_time')
 
     print('\n=======SUMMARY REPORT=======\n')
-    for key, vals_list in data_dict.items():
+    for key, vals_list in data_dict_by_project.items():
+        print_data(key, vals_list)
+
+    print('\n-------by task-------\n')
+    for key, vals_list in data_dict_by_task.items():
         print_data(key, vals_list)
