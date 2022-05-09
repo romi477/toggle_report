@@ -1,9 +1,11 @@
 # python3
 
 from collections import defaultdict
+from datetime import datetime
 import logging
 import re
 
+from dateutil.relativedelta import relativedelta
 from requests.auth import HTTPBasicAuth
 import requests
 
@@ -17,8 +19,8 @@ formatter = logging.Formatter('\n[%(levelname)s] %(message)s')
 channel.setFormatter(formatter)
 _log.addHandler(channel)
 
-WORKSPACE = 00000
-TOKEN = 'xxxxxxxxxxxxxxxxxxxxxx'
+WORKSPACE = 000000
+TOKEN = 'xxxxxxxxxxxxxxxxxxxx'
 
 HEADERS = {
     'content-type': 'application/json',
@@ -39,10 +41,19 @@ def format_date(rdate):
     return f'20{year}-{month}-{day}'
 
 
+def calculate_date(since, until):
+    if not until:
+        pattern = '%d%m%y'
+        last_month_day = datetime.strptime(since, pattern) + relativedelta(day=31)
+        until = last_month_day.date().strftime(pattern)
+
+    return format_date(since), format_date(until)
+
+
 def fetch_data(since, until):
     input_params = {
-        'since': format_date(since),
-        'until': format_date(until),
+        'since': since,
+        'until': until,
     }
     response = requests.get(
         SUMMARY_URL,
@@ -104,11 +115,13 @@ def _exit():
 
 
 if __name__ == '__main__':
-    since = input('Start date (for ex. `010322`): ')
-    until = input('End date (for ex. `010422`): ')
+    since = input('START DATE (for ex. `010322`): ')
+    until = input('END DATE (for ex. `010422` or None): ')
+
+    fsince, funtil = calculate_date(since, until)
 
     try:
-        response = fetch_data(since, until)
+        response = fetch_data(fsince, funtil)
     except Exception as ex:
         _log.error(ex)
         _exit()
