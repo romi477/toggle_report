@@ -1,7 +1,7 @@
 # python3
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import re
 
@@ -20,7 +20,7 @@ channel.setFormatter(formatter)
 _log.addHandler(channel)
 
 WORKSPACE = 000000
-TOKEN = 'xxxxxxxxxxxxxxxxxxxx'
+TOKEN = 'xxxxxxxxxxxxxx'
 
 HEADERS = {
     'content-type': 'application/json',
@@ -32,6 +32,7 @@ PARAMS = {
     'user_agent': 'api_test',
 }
 SUMMARY_URL = 'https://api.track.toggl.com/reports/api/v2/summary'
+DATE_FMT = '%d%m%y'
 
 
 def format_date(rdate):
@@ -42,10 +43,14 @@ def format_date(rdate):
 
 
 def calculate_date(since, until):
+
+    if not since:
+        first_month_day = datetime.today() - relativedelta(day=1)
+        since = first_month_day.date().strftime(DATE_FMT)
+
     if not until:
-        pattern = '%d%m%y'
-        last_month_day = datetime.strptime(since, pattern) + relativedelta(day=31)
-        until = last_month_day.date().strftime(pattern)
+        last_month_day = datetime.strptime(since, DATE_FMT) + relativedelta(day=31)
+        until = last_month_day.date().strftime(DATE_FMT)
 
     return format_date(since), format_date(until)
 
@@ -69,7 +74,7 @@ def fetch_data(since, until):
 
 
 def parse_item_name(title, parse_task=False):
-    entry_list = re.findall(r'\[(.*?)\]', title.get('time_entry', str()))
+    entry_list = re.findall(r'\[(.*?)\]', title.get('time_entry', ''))
     task_code = (entry_list and entry_list[0] or str()).upper()
 
     if parse_task:
@@ -81,25 +86,24 @@ def parse_item_name(title, parse_task=False):
 
 
 def parse_item(item, parse_task=False):
-    item_name = parse_item_name(
-        item.get('title', dict()),
-        parse_task=parse_task,
-    )
-    return item_name, item.get('time', int())
+    item_name = parse_item_name(item['title'], parse_task=parse_task)
+    return item_name, item['time'], item['local_start']
 
 
 def analyze_data(data_list, parse_task=False):
+    local_starts = list()
     data_dict = defaultdict(list)
 
     for data in data_list:
-        total_time = data.get('time', int())
+        total_time = data.get('time', 0)
         data_dict['total_time'].append(total_time)
 
         for item in data.get('items', []):
-            item_key, item_value = parse_item(item, parse_task=parse_task)
+            item_key, item_value, local_start = parse_item(item, parse_task=parse_task)
             data_dict[item_key].append(item_value)
+            local_starts.append(local_start)
 
-    return data_dict
+    return data_dict, local_starts
 
 
 def print_data(name, vals_list):
@@ -109,13 +113,22 @@ def print_data(name, vals_list):
     print(f'{name} - {hours}h {minutes}m')
 
 
+def get_rest_of_days(starts_str):
+    starts_dt = [datetime.fromisoformat(x) for x in starts_str]
+    max_date = max(starts_dt)
+    last_month_day = max_date + relativedelta(day=31)
+    daygenerator = (max_date + timedelta(x + 1) for x in range((last_month_day - max_date).days))
+    rest_days = sum(1 for day in daygenerator if day.weekday() < 5)
+    return rest_days
+
+
 def _exit():
     input('\nPress any key to exit ...')
     exit()
 
 
 if __name__ == '__main__':
-    since = input('START DATE (for ex. `010322`): ')
+    since = input('START DATE (for ex. `010322` or None): ')
     until = input('END DATE (for ex. `010422` or None): ')
 
     fsince, funtil = calculate_date(since, until)
@@ -135,14 +148,27 @@ if __name__ == '__main__':
         _log.info('Empty received data.')
         _exit()
 
-    data_dict_by_project = analyze_data(received_data)
-    data_dict_by_task = analyze_data(received_data, parse_task=True)
+    data_dict_by_project, local_starts = analyze_data(received_data)
+    data_dict_by_task, _ = analyze_data(received_data, parse_task=True)
     data_dict_by_task.pop('total_time')
 
+    if not until:
+        day_rest = get_rest_of_days(local_starts)
+
     print('\n=======SUMMARY REPORT=======\n')
+    print(f'{fsince} : {funtil}\n')
+
     for key, vals_list in data_dict_by_project.items():
         print_data(key, vals_list)
 
     print('\n-------by task-------\n')
+
     for key, vals_list in data_dict_by_task.items():
         print_data(key, vals_list)
+
+    if not until:
+        print('\n-------TODO-------\n')
+        per_day = ((140 * 3600 * 1000) - sum(data_dict_by_project['total_time'])) / day_rest
+        hours = per_day // 3600000
+        minutes = per_day % 3600000 / 60000
+        print(f'{day_rest} days, {hours}h {minutes}m / day\n')
